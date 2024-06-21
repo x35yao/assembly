@@ -54,8 +54,9 @@ for action in actions:
     plt.show()
     print(f'\n {action}: ')
     for i, obj in enumerate(objs):
-        pos_std = stds[i,:2]
-        ori_std = stds[i, -1]
+        pos_std = stds[i,:3]
+        ori_std = stds[i, 3:]
+        # print(obj, pos_std, ori_std)
         augment_pos = (pos_std > POS_THRESH).any()
         augment_ori = (ori_std > ANGLE_THRESH).any()
         print(f'{obj}: augment position {augment_pos}, augment orientation {augment_ori}')
