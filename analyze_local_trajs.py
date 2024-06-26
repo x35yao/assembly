@@ -42,20 +42,20 @@ for action in actions:
             traj_obj = lintrans(traj, H_global_in_obj)
             local_trajs[obj].append(traj_obj)
 
-    for obj in objs:
-        pos_all = np.array(local_trajs[obj])
-        fig = plt.figure(figsize=(9, 5))
-        ax = fig.add_subplot(1, 1, 1, projection='3d')
-        for pos in pos_all:
-            dist = np.linalg.norm(pos[:, :3], axis=1)
-            ind = np.argmin(dist)
-            line = ax.plot(pos[:, 0], pos[:, 1], pos[:, 2],
-                           color='blue', label=f'traj')
-            ax.plot(pos[0, 0], pos[ 0, 1], pos[0, 2], 'o',
-                    color='blue')
-            ax.plot(pos[ind, 0], pos[ind, 1], pos[ind, 2], 's',
-                    color='red', )
-        plt.show()
+    # for obj in objs:
+    #     pos_all = np.array(local_trajs[obj])
+    #     fig = plt.figure(figsize=(9, 5))
+    #     ax = fig.add_subplot(1, 1, 1, projection='3d')
+    #     for pos in pos_all:
+    #         dist = np.linalg.norm(pos[:, :3], axis=1)
+    #         ind = np.argmin(dist)
+    #         line = ax.plot(pos[:, 0], pos[:, 1], pos[:, 2],
+    #                        color='blue', label=f'traj')
+    #         ax.plot(pos[0, 0], pos[ 0, 1], pos[0, 2], 'o',
+    #                 color='blue')
+    #         ax.plot(pos[ind, 0], pos[ind, 1], pos[ind, 2], 's',
+    #                 color='red', )
+    #     plt.show()
 
     stds = []
     means = []
@@ -66,9 +66,32 @@ for action in actions:
     for obj in objs:
         local_trajs[obj] = np.array(local_trajs[obj])
         var[obj] = np.std(local_trajs[obj], axis = 0) ** 2
-    import pickle
-    with open(os.path.join(project_dir, 'transformations', f'variances_{action}.pickle'), 'wb') as f:
-        pickle.dump(var, f)
+        mean = np.mean(local_trajs[obj], axis=0)
+        std = np.std(local_trajs[obj], axis=0)
+        if action == 'action_2':
+            fig, axes = plt.subplots(len(dims), 1, sharex=True, constrained_layout=True)
+            for i, ax in enumerate(axes):
+                ax.errorbar(np.arange(local_trajs[obj].shape[1]), mean[:, i], std[:, i], fmt='o', linewidth=2, capsize=6)
+                ax.set_title(dims[i])
+                if i > 2:
+                    ax.set_ylim(-1.1, 1.1)
+            fig.suptitle(obj, fontsize=16)
+
+            fig, axes = plt.subplots(len(dims), 1, sharex=True, constrained_layout=True)
+            for i in range(local_trajs[obj].shape[0]):
+                for j, ax in enumerate(axes):
+                    ax.plot(local_trajs[obj][i,:,j])
+                    ax.set_title(dims[j])
+                    if j > 2:
+                        ax.set_ylim(-1.1, 1.1)
+            fig.suptitle(obj, fontsize=16)
+            ind = 60
+            print(obj)
+            print(std[ind, :])
+    plt.show()
+    # import pickle
+    # with open(os.path.join(project_dir, 'transformations', f'variances_{action}.pickle'), 'wb') as f:
+    #     pickle.dump(var, f)
 
         # std_obj[obj] = np.std(local_trajs[obj], axis = 0)
         # mean_obj[obj] = np.mean(local_trajs[obj], axis = 0)
