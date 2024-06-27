@@ -56,10 +56,19 @@ def serch_obj_h5files(target_dir):
     h5files = glob(os.path.join(target_dir, '*.h5'))
     return h5files
 
+def _multi_ind_to_single_ind(df):
+    inds = []
+    for ind in df.index:
+        inds.append(ind[0])
+    df.index = inds
+    return df
+
 def combine_h5files(h5files, to_csv = True, destdir = None, suffix = '2d'):
     df_new = pd.DataFrame()
     for h5file in h5files:
         df = pd.read_hdf(h5file)
+        if isinstance(df.index, pd.MultiIndex):
+            df = _multi_ind_to_single_ind(df)
         df_new = pd.concat([df_new, df], axis = 1)
     if destdir == None:
         destdir = os.path.dirname(os.path.dirname(h5file))
