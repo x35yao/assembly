@@ -15,24 +15,40 @@ project_dir = config['project_path']  # Modify this to your need.
 processed_dir = os.path.join(project_dir, 'data', 'processed')
 raw_dir = processed_dir.replace('processed', 'raw')
 actions = ['action_0', 'action_1', 'action_2']
+# actions = ['action_2']
 dims = ['x', 'y', 'z', 'qx', 'qy', 'qz', 'qw']
-plot_dims = ['x', 'y', 'z', '$\\alpha$', '$\\beta$', '$\\gamma$']
+oris = ['euler', 'rotvec', 'quat']
+ori = oris[1]
+plot_action = 'action_2'
+if ori == 'euler':
+    plot_dims = ['x', 'y', 'z', '$\\alpha$', '$\\beta$', '$\\gamma$']
+elif ori == 'rotvec':
+    plot_dims = ['x', 'y', 'z', 'rx', 'ry', 'rz']
+elif  ori == 'quat':
+    plot_dims = ['x', 'y', 'z', 'qx', 'qy', 'qz', 'qw']
+
 
 objs = config['objects']
 for action in actions:
-    demos = os.listdir(os.path.join(processed_dir, action))
+    if action == 'action_2':
+        demos = sorted(os.listdir(os.path.join(processed_dir, action)))[:10]
+        demos = [d for d in demos if d not in ['1709242793', '1709244566']]
+    else:
+        demos = os.listdir(os.path.join(processed_dir, action))
     trajs_ = []
     local_trajs = {obj: [] for obj in objs}
+    bad_demos = []
     for demo in demos:
         traj_file = os.path.join(processed_dir, action, demo, f'{demo}.csv')
         df = pd.read_csv(traj_file)
         traj = df[dims].to_numpy()
+        obj_pose_combined = os.path.join(processed_dir, action, demo, f'{demo}_obj_combined.csv')
+        try:
+            df_pose = pd.read_csv(obj_pose_combined, index_col=0)
+        except FileNotFoundError:
+            bad_demos.append(demo)
+            continue
         for obj in objs:
-            obj_pose_combined = os.path.join(processed_dir, action, demo, f'{demo}_obj_combined.csv')
-            try:
-                df_pose = pd.read_csv(obj_pose_combined, index_col=0)
-            except FileNotFoundError:
-                continue
             unique_obj = [tmp for tmp in df_pose.keys() if obj in tmp][0]
             obj_pose = df_pose.loc[dims, unique_obj].to_numpy()
             rotmat = R.from_quat(obj_pose[3:]).as_matrix()
@@ -40,8 +56,18 @@ for action in actions:
             H_global_in_obj = inverse_homogeneous_transform(H_obj_in_global)
 
             traj_obj = lintrans(traj, H_global_in_obj)
-            local_trajs[obj].append(traj_obj)
-
+            if ori == 'euler':
+                traj_obj_euler = traj_obj.copy()[:,:-1]
+                traj_obj_euler[:, 3:] = R.from_quat(traj_obj[:, 3:]).as_euler('xyz', degrees=True)
+                local_trajs[obj].append(traj_obj_euler)
+            elif ori == 'rotvec':
+                traj_obj_rotvec = traj_obj.copy()[:, :-1]
+                traj_obj_rotvec[:, 3:] = R.from_quat(traj_obj[:, 3:]).as_rotvec()
+                local_trajs[obj].append(traj_obj_rotvec)
+            else:
+                local_trajs[obj].append(traj_obj)
+    for demo in bad_demos:
+        demos.remove(demo)
     # for obj in objs:
     #     pos_all = np.array(local_trajs[obj])
     #     fig = plt.figure(figsize=(9, 5))
@@ -68,26 +94,36 @@ for action in actions:
         var[obj] = np.std(local_trajs[obj], axis = 0) ** 2
         mean = np.mean(local_trajs[obj], axis=0)
         std = np.std(local_trajs[obj], axis=0)
-        if action == 'action_2':
-            fig, axes = plt.subplots(len(dims), 1, sharex=True, constrained_layout=True)
+        if action == plot_action:
+            fig, axes = plt.subplots(len(plot_dims), 1, sharex=True, constrained_layout=True)
             for i, ax in enumerate(axes):
                 ax.errorbar(np.arange(local_trajs[obj].shape[1]), mean[:, i], std[:, i], fmt='o', linewidth=2, capsize=6)
-                ax.set_title(dims[i])
-                if i > 2:
+                ax.set_title(plot_dims[i])
+                if i > 2 and ori == 'quat':
                     ax.set_ylim(-1.1, 1.1)
             fig.suptitle(obj, fontsize=16)
 
-            fig, axes = plt.subplots(len(dims), 1, sharex=True, constrained_layout=True)
+            fig, axes = plt.subplots(len(plot_dims), 1, sharex=True, constrained_layout=True)
             for i in range(local_trajs[obj].shape[0]):
                 for j, ax in enumerate(axes):
                     ax.plot(local_trajs[obj][i,:,j])
-                    ax.set_title(dims[j])
-                    if j > 2:
+                    ax.set_title(plot_dims[j])
+                    if j > 2 and ori == 'quat':
                         ax.set_ylim(-1.1, 1.1)
             fig.suptitle(obj, fontsize=16)
             ind = 60
-            print(obj)
-            print(std[ind, :])
+            n_dim = 4
+            print(obj, np.max(std[ind, 3:]), np.max(std[ind, :3]))
+            if obj == 'bolt':
+                outliers = []
+                lb = mean[ind, n_dim] - std[ind, n_dim]
+                ub = mean[ind, n_dim] + std[ind, n_dim]
+                for k, demo in enumerate(demos):
+                    if local_trajs[obj][k, ind, n_dim] > ub or local_trajs[obj][k, ind, n_dim] < lb:
+                        outliers.append(demo)
+            #     print(outliers)
+            # print(obj)
+            # print(std[ind, :])
     plt.show()
     # import pickle
     # with open(os.path.join(project_dir, 'transformations', f'variances_{action}.pickle'), 'wb') as f:
