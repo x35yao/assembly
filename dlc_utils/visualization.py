@@ -46,7 +46,9 @@ def browse_video_frame(video_path, ind):
 # from memory_profiler import profile
 
 # @profile
-def create_video_with_h5file(video, h5file, suffix = None, thresh = 0.98, dotsize = 3, over_write = False, codec = 'X264'):
+def create_video_with_h5file(video, h5file, suffix = None, thresh = 0.98, dotsize = 3, over_write = False, codec = 'X264', display_bps = True,  font = cv2.FONT_HERSHEY_SIMPLEX
+                    ,fontScale = 0.5
+                    ,fontColor = (0, 0, 0)):
     '''
     This function create a new video with labels. Labels are from the h5file provided.
 
@@ -85,7 +87,7 @@ def create_video_with_h5file(video, h5file, suffix = None, thresh = 0.98, dotsiz
     ny, nx = clip.height(), clip.width()
     det_indices= df.columns[::3]
     for i in trange(nframes):
-        frame = clip.load_frame()
+        frame = clip.load_frame().copy()
         fdata = df.iloc[i].T.sort_index()
         for det_ind in det_indices:
             if 'individuals' in df.columns.names:  # Multi object project
@@ -99,23 +101,33 @@ def create_video_with_h5file(video, h5file, suffix = None, thresh = 0.98, dotsiz
             x = fdata[ind]['x']
             y = fdata[ind]['y']
             likelihood = fdata[ind]['likelihood']
-            # print(ind)
-            # print(likelihood, 'bbbbbbbbbbbbbb')
             if likelihood > thresh:
                 rr, cc = disk((y, x), dotsize, shape=(ny, nx))
                 frame[rr, cc] = colors[obj_bpts.index(obj_bpt)]
+                if display_bps:
+                    if np.isnan(x) or np.isnan(y):
+                        continue
+                    num_bp = obj_bpt[-1]
+                    bp_to_display = f'bp{num_bp}'
+                    cv2.putText(frame, bp_to_display, (int(x), int(y)), font, fontScale, fontColor)
         clip.save_frame(frame)
     clip.close()
     print(f'Video is saved at {outputname}')
     return
 
-def create_images_with_h5file(images, h5file, suffix = None, thresh = 0.98, dotsize = 3, over_write = False, image_type = 'jpeg', destfolder = None):
+def create_images_with_h5file(images, h5file, suffix = None, thresh = 0.98, dotsize = 3, over_write = False, image_type = 'jpeg', destfolder = None, display_bps = False,  font = cv2.FONT_HERSHEY_SIMPLEX
+                    ,fontScale = 0.5
+                    ,fontColor = (0, 0, 0)):
     '''
     This function create a new video with labels. Labels are from the h5file provided.
 
     images: List of images
     h5file: The .h5 file that contains the detections from dlc.
     suffix: Usually it is the remove method to remove the nans. ('fill', 'interpolation', 'drop', 'ignore')
+    display_bps (bool): Whether or not plot bodyparts names in the image.
+    font (cv2 font object): The font of the bodyparts names.
+    fontScale (float): Scale of the font.
+    fontColor (tuple): Color of the font.
 
     '''
     dotsize = dotsize
@@ -163,6 +175,10 @@ def create_images_with_h5file(images, h5file, suffix = None, thresh = 0.98, dots
             if likelihood > thresh:
                 rr, cc = disk((y, x), dotsize, shape=(ny, nx))
                 frame[rr, cc] = colors[obj_bpts.index(obj_bpt)]
+                if display_bps:
+                    num_bp = obj_bpt[-1]
+                    bp_to_display = f'bp{num_bp}'
+                    cv2.putText(frame, bp_to_display, (int(x), int(y)), font, fontScale, fontColor)
 
         outputname = os.path.join(destfolder, img_name).replace(f'.{image_type}', f'_labeled.{image_type}')
         if os.path.isfile(outputname) and over_write == False:

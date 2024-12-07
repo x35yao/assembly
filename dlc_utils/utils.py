@@ -67,6 +67,8 @@ def combine_h5files(h5files, to_csv = True, destdir = None, suffix = '2d'):
     df_new = pd.DataFrame()
     for h5file in h5files:
         df = pd.read_hdf(h5file)
+        if 'scorer' in df.columns.names:
+            df = df.droplevel('scorer', axis = 1)
         if isinstance(df.index, pd.MultiIndex):
             df = _multi_ind_to_single_ind(df)
         df_new = pd.concat([df_new, df], axis = 1)
@@ -100,14 +102,14 @@ def add_individual_level(df, obj):
         df = df.reorder_levels([1, 0, 2, 3], axis=1)
     return df
 
-def _modify_h5files(h5files, obj, multi):
-    for h5file in h5files:
-        df = pd.read_hdf(h5file)
-        if multi:
-            df = rename_individual(df, obj)
-        else:
-            df = add_individual_level(df, obj)
-        if os.path.isfile(h5file):
-            os.remove(h5file)
-        df.to_hdf(h5file, key='df_with_missing')
-        df.to_csv(h5file.replace('.h5', '.csv'))
+def _modify_h5file(h5file, obj, multi):
+    df = pd.read_hdf(h5file)
+    if multi:
+        df = rename_individual(df, obj)
+    else:
+        df = add_individual_level(df, obj)
+    if os.path.isfile(h5file):
+        os.remove(h5file)
+    df.to_hdf(h5file, key='df_with_missing')
+    df.to_csv(h5file.replace('.h5', '.csv'))
+    return df
