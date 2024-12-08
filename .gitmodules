@@ -1,0 +1,3 @@
+[submodule "visual_servoing"]
+	path = visual_servoing
+	url = https://github.com/x35yao/visual-servoing
