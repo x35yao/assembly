@@ -1,3 +1,6 @@
 [submodule "visual_servoing"]
 	path = visual_servoing
 	url = https://github.com/x35yao/visual-servoing
+[submodule "robot_control"]
+	path = robot_control
+	url = https://github.com/x35yao/robot-control
