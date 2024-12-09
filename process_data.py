@@ -3,17 +3,12 @@ import os
 import sys
 import numpy as np
 import pandas as pd
-from .dtw_util import *
 import pickle
 from tqdm import tqdm
 from scipy.spatial.transform import Rotation as R
-from .quaternion_metric import process_quaternions
-from .transformations import lintrans, homogeneous_transform, get_HT_objs_in_base
-import shutil
-# from .transformations import get_HT_objs_in_base, lintrans, homogeneous_transform
-# from .quaternion_metric import process_quaternions
-from matplotlib import pyplot as plt
-import cv2
+from data_processing import lintrans, homogeneous_transform, get_HT_objs_in_base, process_quaternions
+from data_processing.dtw_util import *
+
 
 def align_trajectoires(gripper_trajs, alignment_func, align_with = 'speed'):
     '''
@@ -198,7 +193,7 @@ if __name__ == '__main__':
     process_obj_pose = True
     output_dims =  ['x', 'y', 'z', 'rx', 'ry', 'rz', 'qx', 'qy', 'qz', 'qw']
 
-    with open('./assembly/data/task_config.yaml') as file:
+    with open('./data/task_config.yaml') as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
     project_dir = config['project_path']  # Modify this to your need.
     transformation_dir = config['transformation_path']
@@ -210,7 +205,7 @@ if __name__ == '__main__':
     alignment_func = dtw_funcs[config["alignment_method"]]
 
     date = '2024-08-20'
-    camera_matrix_file = f'./calibrate_camera/camera_matrix/{date}/stereo_params.pickle'
+    camera_matrix_file = f'../calibrate_camera/camera_matrix/{date}/stereo_params.pickle'
     with open(camera_matrix_file, 'rb') as f:
         camera_matrix = pickle.load(f)
     cameraMatrixL = camera_matrix['left-right']['cameraMatrix1']
@@ -366,6 +361,7 @@ if __name__ == '__main__':
                     wrist_inds = sorted(get_wrist_inds(df_compressed, wrist_time))
                     if demo == median_len_demo:
                         median_wrist_inds = wrist_inds
+                        median_demo = demo
 
                     wrist_data_ind = []
                     wrist_data_combined = []
@@ -459,6 +455,7 @@ if __name__ == '__main__':
         action_summary['median_n_images'] = median_n_images
         action_summary['median_traj_len'] = median_traj_len
         action_summary['median_wrist_inds'] = median_wrist_inds
+        action_summary['median_demo'] = median_demo
         with open(os.path.join(processed_dir, action, 'action_summary.pickle'), 'wb') as f:
             pickle.dump(action_summary, f)
     with open(os.path.join(processed_dir, 'wrist_cam_ind.pickle'), 'wb') as f:
