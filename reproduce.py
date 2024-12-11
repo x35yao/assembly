@@ -365,7 +365,6 @@ class IBVS():
                     for item in os.listdir(self.wrist.destfolder):
                         source_item = os.path.join(self.wrist.destfolder, item)
                         destination_item = os.path.join(current_dir, item)
-
                         if os.path.isdir(source_item):
                             # Copy directories recursively
                             shutil.copytree(source_item, destination_item, dirs_exist_ok=True)
@@ -376,31 +375,28 @@ class IBVS():
                     self.wrist.take_pics(current_dir)
                     self.wrist.analyze_image(current_dir)
 
-                env_name = r"C:/Users/xyao0/anaconda3/envs/RVC3"
+                env_name = "C:/Users/xyao0/anaconda3/envs/RVC3"
                 script_path = "C:/Users/xyao0/Desktop/project/assembly/visual_servoing/ibvs_stereo.py"
                 lmbda = self.max_lmbda * 1 / (self.max_run - i)
                 args = [current_dir, target_dir, str(individuals), f'{lmbda}', str(self.thersh)]
-                subprocess.run(["conda", "run", "-p", env_name, "python", script_path] + args, shell=True)
+                subprocess.run(["conda", "run", "-p", env_name, "python", script_path] + args , shell=True)
 
                 ### Handel projectory ###
                 planned_traj, is_finished = self.process_traj()
-                print(is_finished)
-                self.finished = is_finished
-                fig = plt.figure(figsize=(9, 5))
-                ax = fig.add_subplot(1, 1, 1, projection='3d')
-                ax.plot(planned_traj[0, 0], planned_traj[0, 1], planned_traj[0, 2], 'o', color = 'red')
-                ax.plot(0, 0, 0, 'o', color = 'blue')
-                ax.plot(planned_traj[:,0], planned_traj[:,1], planned_traj[:,2])
-                ax.set_xlabel('x')
-                ax.set_ylabel('y')
-                ax.set_zlabel('z')
-                plt.show()
-                raise
+                # print(is_finished)
+                # self.finished = is_finished
+                # fig = plt.figure(figsize=(9, 5))
+                # ax = fig.add_subplot(1, 1, 1, projection='3d')
+                # ax.plot(planned_traj[0, 0], planned_traj[0, 1], planned_traj[0, 2], 'o', color = 'red')
+                # ax.plot(0, 0, 0, 'o', color = 'blue')
+                # ax.plot(planned_traj[:,0], planned_traj[:,1], planned_traj[:,2])
+                # ax.set_xlabel('x')
+                # ax.set_ylabel('y')
+                # ax.set_zlabel('z')
+                # plt.show()
+                # raise
                 ### Move robot ###
                 self.robot.servoL(planned_traj)
-
-
-
         print('IBVS finished due to max runs')
 
 
@@ -460,9 +456,9 @@ class Planner():
                 print('Remove this later!!!!!!!!!!!')
                 ### Do ibvs
                 individuals = ['nut1']
-                current_dir = os.path.join(self.ibvs.ibvs_dir, 'current')
+                current_dir = os.path.join(self.ibvs.ibvs_dir, "current")
                 self.action = 0
-                target_dir = os.path.join(self.ibvs.ibvs_dir, f'target/action_{self.action}')
+                target_dir = os.path.join(self.ibvs.ibvs_dir, f"target/action_{self.action}")
                 self.ibvs.run(current_dir, target_dir, individuals)
                 traj_valid = None
             else:
@@ -551,7 +547,7 @@ if __name__ == "__main__":
     # action_summary['wrist_end_inds'] = [81, 104, 144]
     #
     # cam_poses_path = os.path.join(project_dir, 'data/reproduce/ibvs/plan/cam_poses.pickle')
-    ibvs_dir = os.path.join(project_dir, 'data/reproduce/ibvs')
+    ibvs_dir = os.path.join(project_dir, "data/reproduce/ibvs")
     ibvs = IBVS(ibvs_dir, robot, wrist_cam)
 
     colors = {'bolt': 'green', 'nut': 'yellow', 'bin': 'black', 'jig': 'purple', 'traj': 'red', 'trajectory': 'pink'}
@@ -590,8 +586,8 @@ if __name__ == "__main__":
         # wrist_cam.take_pics()
         # wrist_cam.analyze_image()
 
-        target_dir = os.path.join(project_dir, 'data', 'reproduce', 'ibvs', action)
-        ibvs.run(destfolder_wrist, target_dir, ['nut1'])
+        # target_dir = os.path.join(project_dir, 'data', 'reproduce', 'ibvs', action)
+        # ibvs.run(destfolder_wrist, target_dir, ['nut1'])
         raise
 
 
