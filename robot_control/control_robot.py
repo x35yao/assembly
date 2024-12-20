@@ -2,26 +2,27 @@ import time
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+from tqdm import tqdm
 
-
-VELOCITY = 0.05
+SPEED = 0.3
 ACCELERATION = 0.05
 
 
 # defaltQ = [0.0003591522399801761, -1.1898253599749964, -1.743985954915182, -1.7710626761065882, 1.556787133216858,
 #            -4.738660995160238]
-defaltQ = [0.00034716803929768503, -1.1898253599749964, -1.743997875844137, -1.8, 1.5560801029205322, -4.7386489550219935]## defalt joint position of the robot
+# defaltQ = [0.00034716803929768503, -1.1898253599749964, -1.743997875844137, -1.8, 1.5560801029205322, -4.7386489550219935]## defalt joint position of the robot
+defaltQ = [0.00043105758959427476, -1.189646069203512, -1.7439501921283167, -1.8001225630389612, 1.5559242963790894, -4.738349382077352]
 
 defaltTCP = [0.3228618875769767, -0.1118356963537865, 0.29566077338942987, 3.134481837517487, 0.04104053340885737, -0.033028778010714535] ## defalt robot pose
 
 def move_to_defalt_pose(rtde_c, asynchronous = True):
-    rtde_c.moveJ(defaltQ, speed = 0.4, acceleration = 0.4, asynchronous = asynchronous)  ## Back to defalt pose
-    return
+    rtde_c.moveJ(defaltQ, speed = SPEED, acceleration = 0.4, asynchronous = asynchronous)  ## Back to defalt pose
+    return()
 
 def move_to_defalt_ori(rtde_r, rtde_c, asynchronous = True):
     target = rtde_r.getActualTCPPose()
     target[3:] = defaltTCP[3:]
-    rtde_c.moveL(target, speed = 0.4, acceleration = 0.4, asynchronous = asynchronous)  ## Back to defalt pose
+    rtde_c.moveL(target, speed = SPEED, acceleration = 0.4, asynchronous = asynchronous)  ## Back to defalt pose
     return
 
 def move_foward(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
@@ -32,7 +33,7 @@ def move_foward(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
         rotmat = R.from_rotvec(target[3:]).as_matrix()
         t = rotmat @ np.array([D, 0, 0])
         target[0:3] += t
-    rtde_c.moveL(target, VELOCITY, ACCELERATION, asynchronous = asynchronous)
+    rtde_c.moveL(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def move_backward(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
@@ -43,7 +44,7 @@ def move_backward(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
         rotmat = R.from_rotvec(target[3:]).as_matrix()
         t = rotmat @ np.array([-D, 0, 0])
         target[0:3] += t
-    rtde_c.moveL(target, VELOCITY, ACCELERATION, asynchronous = asynchronous)
+    rtde_c.moveL(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def move_left(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
@@ -54,7 +55,7 @@ def move_left(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
         rotmat = R.from_rotvec(target[3:]).as_matrix()
         t = rotmat @ np.array([0, -D, 0])
         target[0:3] += t
-    rtde_c.moveL(target, VELOCITY, ACCELERATION, asynchronous = asynchronous)
+    rtde_c.moveL(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def move_right(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
@@ -65,7 +66,7 @@ def move_right(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
         rotmat = R.from_rotvec(target[3:]).as_matrix()
         t = rotmat @ np.array([0, D, 0])
         target[0:3] += t
-    rtde_c.moveL(target, VELOCITY, ACCELERATION, asynchronous = asynchronous)
+    rtde_c.moveL(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def move_up(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
@@ -76,7 +77,7 @@ def move_up(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
         rotmat = R.from_rotvec(target[3:]).as_matrix()
         t = rotmat @ np.array([0, 0, -D])
         target[0:3] += t
-    rtde_c.moveL(target, VELOCITY, ACCELERATION, asynchronous = asynchronous)
+    rtde_c.moveL(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def move_down(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
@@ -87,7 +88,7 @@ def move_down(rtde_r, rtde_c, D, reference_frame, asynchronous = True):
         rotmat = R.from_rotvec(target[3:]).as_matrix()
         t = rotmat @ np.array([0, 0, D])
         target[0:3] += t
-    rtde_c.moveL(target, VELOCITY, ACCELERATION, asynchronous = asynchronous)
+    rtde_c.moveL(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def rotate_wrist_clockwise(rtde_r, rtde_c, asynchronous = True):
@@ -104,14 +105,14 @@ def rotate_wrist_counterclockwise(rtde_r, rtde_c, asynchronous = True):
 
 def screw(rtde_r, rtde_c, asynchronous = True):
     target = rtde_r.getActualQ()
-    target[-1] += 3 * np.pi
-    rtde_c.moveJ(target, asynchronous = asynchronous)
+    target[-1] += 2 * np.pi
+    rtde_c.moveJ(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def unscrew(rtde_r, rtde_c, asynchronous = True):
     target = rtde_r.getActualQ()
     target[-1] += - 3 * np.pi
-    rtde_c.moveJ(target, asynchronous = asynchronous)
+    rtde_c.moveJ(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def wrist2_plus(rtde_r, rtde_c, asynchronous = True):
@@ -128,20 +129,19 @@ def wrist2_minus(rtde_r, rtde_c, asynchronous = True):
 
 def wrist1_plus(rtde_r, rtde_c, asynchronous = True):
     target = rtde_r.getActualQ()
-    target[-3] += 0.3
-    rtde_c.moveJ(target, asynchronous = asynchronous)
+    target[-3] += 0.1
+    rtde_c.moveJ(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def wrist1_minus(rtde_r, rtde_c, asynchronous = True):
     target = rtde_r.getActualQ()
-    target[-3] += -0.3
-    rtde_c.moveJ(target, asynchronous = asynchronous)
+    target[-3] += -0.1
+    rtde_c.moveJ(target, SPEED, ACCELERATION, asynchronous = asynchronous)
     return
 
 def servoL(poses, rtde_c, dt, vel = 0.05, acc = 0.05, lookahead_time = 0.1, gain = 300):
-    print(len(poses))
-    for i, pose in enumerate(poses):
-        print(i)
+    for i, pose in enumerate(tqdm(poses)):
+        # print(i, pose)
         t_start = rtde_c.initPeriod()
         rtde_c.servoL(pose, vel, acc, dt, lookahead_time, gain)
         rtde_c.waitPeriod(t_start)
@@ -200,15 +200,15 @@ def servoL(poses, rtde_c, dt, vel = 0.05, acc = 0.05, lookahead_time = 0.1, gain
 
 def get_vertical(rtde_r, rtde_c, asynchronous = True):
     target = rtde_r.getActualQ()
-    target[3:] = [-1.7710626761065882, 1.556787133216858, -4.738660995160238]
-    rtde_c.moveJ(target, speed = 0.4, acceleration = 0.4, asynchronous = asynchronous)
+    target[-3] -= 1.6
+    rtde_c.moveJ(target, speed=SPEED, acceleration=ACCELERATION, asynchronous=asynchronous)
     return
 
 def get_horizontal(rtde_r, rtde_c, asynchronous = True):
     target = rtde_r.getActualQ()
-    target[3:] = [-3.4431965986834925, -1.623061482106344, -1.5770514647113245]
-    rtde_c.moveJ(target, speed = 0.4, acceleration = 0.4, asynchronous = asynchronous)
-    return
+    target[-3] += 1.6
+    rtde_c.moveJ(target, speed = SPEED, acceleration = ACCELERATION, asynchronous=asynchronous)
+    return 
 
 def stop(rtde_c):
     rtde_c.stopJ(10, True)

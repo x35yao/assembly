@@ -18,12 +18,15 @@ import shutil
 import yaml
 from scipy.spatial.transform import Rotation as R
 from transformer import TFEncoderDecoder5, create_tags, normalize_wrapper
-from data_processing import get_obj_pose, homogeneous_transform, svo_to_avi, quat_to_rotvect, rotvect_to_quat,inverse_homogeneous_transform, vec2homo, homo2vec
+from data_processing import get_obj_pose, homogeneous_transform, svo_to_avi, quat_to_rotvect, rotvect_to_quat,inverse_homogeneous_transform, vec2homo, homo2vec, process_quaternions
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
 import urllib
 import subprocess
+
+def is_capslock_on():
+    return True if ctypes.WinDLL("User32.dll").GetKeyState(0x14) else False
 
 def find_next_greater(a, x):
     for value in a:
@@ -52,13 +55,16 @@ def plot_traj_and_obj_pos(traj_pos, obj_data = None, colors = None, all_objs = N
             unique_obj = all_objs[i]
             color = colors[unique_obj]
             ax.plot(obj_pos[0], obj_pos[1], obj_pos[2], 's', color=color, label = unique_obj)
+
     ax.legend()
     return fig, ax
 
 def close_on_key(event):
     #### press any key to close the window.
-    # print(f"Key pressed: {event.key}")  # Optional: print the key pressed
+    global image_key_pressed
+    image_key_pressed = event.key
     plt.close()
+    return event.key
 
 class Robot():
     def __init__(self, host, frequency):
@@ -75,15 +81,17 @@ class Robot():
         except RuntimeError:
             print('Robot connection failure')
 
-    # def get_tcp_pose(self):
-    #     return self.rtde_r.getActualTCPPose()
-
     def get_tcp_pose(self):
-        print('This is for testing purposes, change it back to the function above!!!!!!!!')
-        return np.array([0.3228618875769767, -0.1118356963537865, 0.29566077338942987, 3.134481837517487, 0.04104053340885737, -0.033028778010714535])
+        return self.rtde_r.getActualTCPPose()
 
     def servoL(self, traj):
         servoL(traj, self.rtde_c, self.dt)
+
+    def open_gripper(self):
+        open_gripper(self.rtde)
+
+    def close_gripper(self):
+        close_gripper(self.rtde)
 
 class Zed():
     def __init__(self, destfolder, videotype = 'avi'):
@@ -222,22 +230,23 @@ class Network():
         obj_pose_seq = torch.tensor(np.array(obj_pose_seq))
         obj_seq_normalized = self.norm_func(obj_pose_seq.clone())
         self.obj_seq = obj_seq_normalized[None, :, :]
+
         return self.obj_seq
 
     def predict_traj_and_action(self):
         self.model.eval()
         traj_hidden = torch.zeros((1, self.max_len, self.traj_seq_dim), dtype=torch.double)
-        traj_hidden[0, 0, :7] = torch.tensor([-1.9606, -0.4157, 0.4109, 0.9999, 0.0132, -0.0105, 0.0031])
-        traj_hidden[0, :, 7] = 1
+        # traj_hidden[0, 0, :7] = torch.tensor([-1.9606, -0.4157, 0.4109, 0.9999, 0.0132, -0.0105, 0.0031])
+        traj_hidden[0, :, -1] = 1
         padding_mask = torch.zeros(1, self.max_len)
         padding_mask = padding_mask > 0
-        traj_seq, action_tag = self.model(self.obj_seq, traj_hidden, tgt_padding_mask=padding_mask, predict_action=True)
+        traj_seq, action_tag = self.model(self.obj_seq, traj_hidden, tgt_padding_mask=padding_mask, predict_action=False)
         traj_seq = traj_seq.detach().numpy()[0]
         traj = quat_to_rotvect(traj_seq)
         traj[:, :3] = (traj[:, :3] * self.std + self.mean) / SCALE
-        action_tag = action_tag.detach().numpy()[0]
-        action = np.argmax(action_tag)
-        return traj, action
+        # action_tag = action_tag.detach().numpy()[0]
+        # action = np.argmax(action_tag)
+        return traj, action_tag
 
     # def predict_traj(self, traj_len):
     #     self.model.eval()
@@ -313,7 +322,7 @@ class PoseProcessor():
                                              window_size=1)
 
 class IBVS():
-    def __init__(self, ibvs_dir, robot, wrist, max_lmbda = 0.1, thresh = 20, max_run = 3, scale = 1000):
+    def __init__(self, ibvs_dir, robot, wrist, max_lmbda = 0.1, thresh = 4, max_run = 4, scale = 1000):
         self.ibvs_dir = ibvs_dir
         self.wrist = wrist
         self.max_lmbda = max_lmbda
@@ -353,7 +362,8 @@ class IBVS():
             is_finished = False
         return tcp_poses_vec, is_finished
 
-    def run(self, current_dir, target_dir, individuals):
+    def run(self, current_dir, target_dir, individuals_grasped, individuals_target):
+        self.finished = False
         for i in range(self.max_run):
             if self.finished:
                 print('IBVS finished due to threshold statisfied.')
@@ -362,129 +372,178 @@ class IBVS():
                 ### Take pics ###
                 self.wrist.clear_folder(current_dir)
                 if i == 0: ### Copy the analyzed images
-                    for item in os.listdir(self.wrist.destfolder):
-                        source_item = os.path.join(self.wrist.destfolder, item)
-                        destination_item = os.path.join(current_dir, item)
-
-                        if os.path.isdir(source_item):
-                            # Copy directories recursively
-                            shutil.copytree(source_item, destination_item, dirs_exist_ok=True)
-                        else:
-                            # Copy files
-                            shutil.copy2(source_item, destination_item)
+                    source_item = os.path.join(self.wrist.destfolder, '3d_combined')
+                    destination_item = os.path.join(current_dir, '3d_combined')
+                    shutil.copytree(source_item, destination_item)
+                    time.sleep(2)
                 else: ## Take new images
                     self.wrist.take_pics(current_dir)
                     self.wrist.analyze_image(current_dir)
-
                 env_name = r"C:/Users/xyao0/anaconda3/envs/RVC3"
+                # script_path = "C:/Users/xyao0/Desktop/project/assembly/visual_servoing/ibvs_stereo - old.py"
                 script_path = "C:/Users/xyao0/Desktop/project/assembly/visual_servoing/ibvs_stereo.py"
-                lmbda = self.max_lmbda * 1 / (self.max_run - i)
-                args = [current_dir, target_dir, str(individuals), f'{lmbda}', str(self.thersh)]
+                # lmbda = self.max_lmbda * 1 / (self.max_run - i)
+                lmbda = self.max_lmbda * 1 / (1 + i)
+                args = [current_dir, target_dir, str(individuals_grasped), str(individuals_target),f'{lmbda}', str(self.thersh)]
                 subprocess.run(["conda", "run", "-p", env_name, "python", script_path] + args, shell=True)
 
                 ### Handel projectory ###
                 planned_traj, is_finished = self.process_traj()
-                print(is_finished)
+                print(f'length of the traj is {len(planned_traj)}')
                 self.finished = is_finished
-                fig = plt.figure(figsize=(9, 5))
-                ax = fig.add_subplot(1, 1, 1, projection='3d')
-                ax.plot(planned_traj[0, 0], planned_traj[0, 1], planned_traj[0, 2], 'o', color = 'red')
-                ax.plot(0, 0, 0, 'o', color = 'blue')
-                ax.plot(planned_traj[:,0], planned_traj[:,1], planned_traj[:,2])
-                ax.set_xlabel('x')
-                ax.set_ylabel('y')
-                ax.set_zlabel('z')
+                fig, ax = plot_traj_and_obj_pos(planned_traj)
+                fig.canvas.mpl_connect('key_press_event', close_on_key)  ###  press any key to close the plot window
                 plt.show()
-                raise
                 ### Move robot ###
-                self.robot.servoL(planned_traj)
-
-
-
+                global image_key_pressed
+                if image_key_pressed == 'y' or image_key_pressed == 'Y':
+                    self.robot.servoL(planned_traj)
+                    image_key_pressed = None
         print('IBVS finished due to max runs')
 
 
 class Planner():
-    def __init__(self, net, ibvs, robot, zed, wrist, pose_processor, colors, all_objs):
+    def __init__(self, net, ibvs, robot, zed, wrist, pose_processor, action_summary, colors, all_objs):
         self.net = net
         self.ibvs = ibvs
         self.robot = robot
         self.zed = zed
         self.wrist = wrist
         self.pose_processor = pose_processor
+        self.action_summary = action_summary
         self.colors = colors
         self.all_objs = all_objs
-        self.curret_ind = 0
+        self.current_ind = 0
 
     def step(self, current_ind = None):
         current_tcp_in_base = np.array(robot.get_tcp_pose())
         current_tcp_in_base[:3] = current_tcp_in_base[:3] * SCALE
         current_tcp_in_base_quat = rotvect_to_quat(current_tcp_in_base).flatten()
         if current_ind is None:
-            current_ind = self.curret_ind
-
+            current_ind = self.current_ind
+        print(current_ind, 'aaaaaaaaaaaaa')
         if current_ind == 0: ### Take video using zed camera at the start of the trajectory
+
             # self.zed.clear_folder()
             # self.zed.capture_video()
             # self.zed.analyze_video()
+
             self.pose_processor.get_pose_zed()
             self.net.update_obj_sequence(self.pose_processor.obj_pose_zed, self.pose_processor.obj_pose_wrist,
                                          current_tcp_in_base_quat,
                                          self.all_objs)
             self.traj_transformer, self.action = self.net.predict_traj_and_action()  ### predict transformer traj after object sequence updated
-            self.action = 0
+            self.action = ACTION
             print('Remove this later!!!!!!!!!!!')
-            action_summary_file = os.path.join(project_dir, 'data', 'processed', f'action_{self.action}',
-                                               'action_summary.pickle')
-            with open(action_summary_file, 'rb') as f:
-                action_summary = pickle.load(f)
-            self.wrist_start_inds = action_summary['median_wrist_inds']
-            self.wrist_end_inds = [81, 104, 144]
-            self.median_len = action_summary['median_traj_len']
-            next_ind = find_next_greater(self.wrist_start_inds, self.curret_ind)
+            self.current_action_sumamry = self.action_summary[self.action]
+            self.wrist_start_inds = self.current_action_sumamry['wrist_start_inds']
+            self.wrist_end_inds = self.current_action_sumamry['wrist_end_inds']
+            self.traj_len = self.current_action_sumamry['traj_len']
+            self.obj_moving = self.current_action_sumamry['obj_moving']
+            next_ind = find_next_greater(self.wrist_start_inds, current_ind)
             if next_ind is None:
-                next_ind = self.median_len - 1
-            traj_valid = self.traj_transformer[self.curret_ind:next_ind]
-            # self.robot.servoL(traj_valid)
-            self.curret_ind = next_ind
+                next_ind = self.traj_len - 1
+            traj_valid = self.traj_transformer[current_ind:next_ind]
+            self.current_ind = next_ind
         else:
-            if current_ind in self.wrist_start_inds:
-                # self.wrist.clear_folder()
-                # self.wrist.take_pics()
-                # self.wrist.analyze_image()
+            self.action = ACTION
+            self.current_action_sumamry = self.action_summary[self.action]
+            if current_ind in self.current_action_sumamry['wrist_start_inds']:
+                self.previous_tcp_in_base_quat = current_tcp_in_base_quat
+                wrist_ind = list(self.current_action_sumamry['wrist_start_inds']).index(current_ind)
+
+                print(wrist_ind, 'gggggggggggg')
+                individuals_target = []
+                individuals_grasped = []
+                next_ind = find_next_greater(self.current_action_sumamry['wrist_start_inds'], current_ind)
+                for obj in self.all_objs:
+                    if obj == 'trajectory':
+                        continue
+                    if self.current_action_sumamry['obj_moving'][obj][current_ind]: ### Object moving with gripper should not be considered when doing IBVS
+                        individuals_grasped.append(obj + '1')
+                    if next_ind is not None:
+                        if (not self.current_action_sumamry['obj_moving'][obj][current_ind]) and (self.current_action_sumamry['obj_moving'][obj][next_ind]):
+                            individuals_target.append(obj + '1')
+                    else:
+                        if (not self.current_action_sumamry['obj_moving'][obj][current_ind]):
+                            individuals_target.append(obj + '1')
+                if current_ind == 65:
+                    individuals_target = ['nut1', 'jig1']
+
+                self.wrist.clear_folder()
+                self.wrist.take_pics()
+                self.wrist.analyze_image()
+
                 self.pose_processor.get_pose_wrist(current_tcp_in_base)
+                self.pose_processor.get_pose_zed()
+
                 self.net.update_obj_sequence(self.pose_processor.obj_pose_zed, self.pose_processor.obj_pose_wrist, current_tcp_in_base_quat,
                                          self.all_objs)
-                self.traj_transformer, self.action = self.net.predict_traj_and_action() ### predict transformer traj after object sequence updated
-                self.action = 0
+                self.traj_transformer, _ = self.net.predict_traj_and_action() ### predict transformer traj after object sequence updated
                 print('Remove this later!!!!!!!!!!!')
                 ### Do ibvs
-                individuals = ['nut1']
+                print(self.action, 'ffffffffff')
+                # individuals_grasped = []
+                print(f'Grapsed individuals {individuals_grasped}')
+                print(f'Target individuals {individuals_target}')
                 current_dir = os.path.join(self.ibvs.ibvs_dir, 'current')
-                self.action = 0
-                target_dir = os.path.join(self.ibvs.ibvs_dir, f'target/action_{self.action}')
-                self.ibvs.run(current_dir, target_dir, individuals)
+                target_dir = os.path.join(self.ibvs.ibvs_dir, f'target/{self.action}', f'{wrist_ind + 1}')
+                self.ibvs.run(current_dir, target_dir, individuals_grasped, individuals_target)
                 traj_valid = None
+                next_ind = find_next_greater(self.current_action_sumamry['wrist_end_inds'], current_ind)
+                self.current_ind = next_ind
             else:
                 ### Do transformer
-                next_ind = find_next_greater(self.wrist_start_inds, self.curret_ind)
+                if self.pose_processor.obj_pose_zed is None:
+                    self.pose_processor.obj_pose_zed = pd.read_csv(os.path.join(self.zed.destfolder, 'obj_pose_zed.csv'), index_col=0)
+                if self.pose_processor.obj_pose_wrist is None:
+                    self.pose_processor.obj_pose_wrist = pd.read_csv(os.path.join(self.wrist.destfolder, 'obj_pose_wrist.csv'), index_col=0)
+                self.net.update_obj_sequence(self.pose_processor.obj_pose_zed, self.pose_processor.obj_pose_wrist,
+                                             self.previous_tcp_in_base_quat,
+                                             self.all_objs)
+                self.traj_transformer, _ = self.net.predict_traj_and_action()  ### predict transformer traj after object sequence updated
+                current_tcp_in_base = np.array(self.robot.get_tcp_pose()).reshape((1, -1))
+                traj = self.traj_transformer[current_ind:]
+                diff = traj - traj[0]
+                traj = current_tcp_in_base + diff
+                # if np.max(diff[:, 3:]) > 0.5 or np.max(diff[:, :3]) > 0.05:
+                #     print(f'The difference between tf and ibvs is {diff}')
+                #     print('Too big of a difference, are you sure about this')
+                #     raise
+
+                # fig2, axes = plt.subplots(3, 1, figsize=(9, 10))
+                # for i, ax in enumerate(axes):
+                #     ax.plot(self.traj_transformer[current_ind:, i + 3], color='red')
+                #     ax.plot(traj[:, 3 + i], color='blue')
+                    # ax.set_ylim(-np.sqrt(2), np.sqrt(2))
+                self.traj_transformer[current_ind:] = traj
+                next_ind = find_next_greater(self.current_action_sumamry['wrist_start_inds'], current_ind)
+                print(current_ind, next_ind, 'ffffffffffffffffffffff')
+
                 if next_ind is None:
-                    next_ind = self.median_len - 1
-                traj_valid = self.traj_transformer[self.curret_ind:next_ind]
-                self.robot.servoL(traj_valid)
-                self.curret_ind = next_ind
+                    next_ind = self.traj_len - 1
+                traj_valid = self.traj_transformer[current_ind:next_ind]
+                print(next_ind, 'ggggggggg')
+                self.current_ind = next_ind
         if traj_valid is not None:
             traj_valid_plot = traj_valid.copy()
             traj_valid_plot[:, :3] = traj_valid_plot[:, :3] * SCALE
             fig, ax = plot_traj_and_obj_pos(traj_valid_plot, self.net.obj_pose, self.colors, self.all_objs)
             fig.canvas.mpl_connect('key_press_event', close_on_key) ###  press any key to close the plot window
             plt.show()
-        # self.robot.servoL(traj_valid)
-        self.curret_ind = next_ind
-        print(self.curret_ind)
-        # raise
+            global image_key_pressed
+            if image_key_pressed == 'y' or image_key_pressed == 'Y':
+                self.robot.servoL(traj_valid)
+                image_key_pressed = None
+        print(self.current_ind, 'bbbbbbbbbbb')
+        if self.current_ind in self.current_action_sumamry['gripper_open_inds']:
+            self.robot.open_gripper()
+        elif self.current_ind in self.current_action_sumamry['gripper_close_inds']:
+            self.robot.close_gripper()
+
 
 if __name__ == "__main__":
+    image_key_pressed = None
     SCALE = 1000
     ### Load task config ###
     with open(os.path.join('./data/task_config.yaml')) as file:
@@ -498,111 +557,105 @@ if __name__ == "__main__":
 
     ### Load transformer data
     max_len = 200
-    # objs = sorted(config['objects'])
-    objs = config['objects']
-    tag_objs = ['trajectory'] + sorted(objs)
+    objs = sorted(config['objects'])
     all_objs = objs + ['trajectory']
     actions = config['actions']
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("Cuda available: ", torch.cuda.is_available())
-    model_folder = 'speed_grasp_weights-hidden-64-smooth_pos'
-    model_ind = 40000
+    model_folder = 'speed_wrist_weights-hidden-64-smooth_pos'
+    model_ind = 10000
     seed = 123
     model_path = os.path.join(project_dir, f'transformer/{model_folder}/{seed}/model_{model_ind}.pth')
     model_stat_path = os.path.join(project_dir, f'transformer/{model_folder}/{seed}/train_stat.pickle')
     with open(model_stat_path, 'rb') as f:
         train_stat = pickle.load(f)
     my_net = Network(max_len, train_stat, device)
-    # my_net.load_model(model_path)
-    my_net.get_obj_tags(tag_objs)
+    my_net.load_model(model_path)
+    my_net.get_obj_tags(all_objs)
 
     ### Connect to the robot #######
     FREQUENCY = 1
     dt = 1/ FREQUENCY
     host = "192.168.3.5"
     robot = Robot(host, FREQUENCY)
-    # robot.connect()
+    robot.connect()
+    # [0.000323199579725042, -1.1896336714373987, -1.7440336386310022, -0.2002013365374964, 1.5558044910430908, -4.738313380871908]
+
 
     ### Connect to the zed camera ###
     destfolder_zed = os.path.join(FOLDER, 'zed')
     zed_cam = Zed(destfolder_zed)
-    # zed_cam.connect_camera()
-    # zed_cam.capture_video()
-    # zed_cam.analyze_video()
-
+    zed_cam.connect_camera()
 
     ### Connect to the writst cameras ###
-    url_left = 'http://192.168.0.102:8080/shot.jpg'
-    url_right = 'http://192.168.0.101:8080/shot.jpg'
+    url_left = 'http://192.168.0.100:8080/shot.jpg'
+    url_right = 'http://192.168.0.102:8080/shot.jpg'
     destfolder_wrist = destfolder_zed.replace('zed', 'wrist')
     wrist_cam = Wrist(destfolder_wrist, url_left, url_right)
+    # wrist_cam.clear_folder()
     # wrist_cam.take_pics()
     # wrist_cam.analyze_image()
+    # raise
 
     ### Object pose processor ###
     transformation_dir = config['transformation_path']
     pose_processor = PoseProcessor(transformation_dir, destfolder_zed, destfolder_wrist)
-    # pose_processor.get_pose_zed()
 
-    # action = 'action_0'
-    #
-    # median_traj_len = action_summary['median_traj_len']
-    # vs_start_inds = action_summary['median_wrist_inds']
-    # action_summary['wrist_end_inds'] = [81, 104, 144]
-    #
-    # cam_poses_path = os.path.join(project_dir, 'data/reproduce/ibvs/plan/cam_poses.pickle')
+    ### IBVS object ####
+    img_ind = 3
+    ACTION = f'action_1'
+    # ACTION = 'action_0'
+    # ACTION = 'action_2'
+
     ibvs_dir = os.path.join(project_dir, 'data/reproduce/ibvs')
     ibvs = IBVS(ibvs_dir, robot, wrist_cam)
+    # wrist_cam.analyze_image(os.path.join(ibvs.ibvs_dir, 'target',ACTION, f'{img_ind}'))
 
-    colors = {'bolt': 'green', 'nut': 'yellow', 'bin': 'black', 'jig': 'purple', 'traj': 'red', 'trajectory': 'pink'}
-    my_planner = Planner(my_net, ibvs, robot, zed_cam, wrist_cam, pose_processor, colors, all_objs)
-    my_planner.step()
-    my_planner.step()
-    raise
+    # f = os.path.join(ibvs.ibvs_dir, 'target', ACTION, f'{img_ind}', f'{img_ind}DLC_resnet50_jigNov22shuffle1_80000.h5')
+    f = os.path.join(wrist_cam.destfolder, 'wristDLC_resnet50_jigNov22shuffle1_80000.h5')
+    df = pd.read_hdf(f)
+    # print(df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart1'])
+    # print(df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart3'])
+    # print(df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart4'])
+    # print(df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart2'])
+    # raise
+    # df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart1']['likelihood'].iloc[0] = 1
+    # df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart2']['likelihood'].iloc[0] = 1
+    # df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart1']['likelihood'].iloc[1] = 1
+    # df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart2']['likelihood'].iloc[1] = 1
+    # df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart3']['likelihood'].iloc[0] = 1
+    # df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart4']['likelihood'].iloc[0] = 1
+    # df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart3']['likelihood'].iloc[1] = 1
+    # df['DLC_resnet50_jigNov22shuffle1_80000']['jig1']['bodypart4']['likelihood'].iloc[1] = 1
+    # os.remove(f)
+    # df.to_hdf(f, key = 'df_with_missing')
+    # wrist_cam.analyze_image()
+    # # wrist_cam.analyze_image(os.path.join(ibvs.ibvs_dir, 'target', ACTION, '3'))
+    # raise
+    #
+    action_summary_file = os.path.join(project_dir, 'data/action_summary_all.pickle')
 
-    action = 'action_0'
-    action_summary_file = os.path.join(project_dir, 'data', 'processed', action, 'action_summary.pickle')
+
     with open(action_summary_file, 'rb') as f:
         action_summary = pickle.load(f)
-    median_traj_len = action_summary['median_traj_len']
-    vs_start_inds = action_summary['median_wrist_inds']
-    vs_end_inds = [81, 104, 144]
-    gripper_close_ind = 81
-    gripper_open_ind = 144
+    # action_summary['action_2']['wrist_start_inds'][1] = 85
+    # action_summary['action_2']['wrist_end_inds'][1] = 86
+    print(action_summary[ACTION]['wrist_start_inds'])
+    print(action_summary[ACTION]['wrist_end_inds'])
+    print(action_summary[ACTION]['gripper_open_inds'])
+    print(action_summary[ACTION]['gripper_close_inds'])
+    print(action_summary[ACTION].keys())
+    print(action_summary[ACTION]['median_demo'])
 
-    current_ind = 0
-    for i, ind in enumerate(vs_start_inds):
-        # ### Predict from transformer
-        # current_tcp_in_base = np.array(robot.get_tcp_pose())
-        # print(current_tcp_in_base)
-        # current_tcp_in_base[:3] = current_tcp_in_base[:3] * SCALE
-        # pose_processor.get_pose_wrist(h5_3d_file_wrist, current_tcp_in_base, destfolder_wrist)
-        # current_tcp_in_base_quat = rotvect_to_quat(current_tcp_in_base).flatten()
-        # my_net.udpate_obj_sequence(pose_processor.obj_pose_zed, pose_processor.obj_pose_wrist, current_tcp_in_base_quat,
-        #                            all_objs)
-        # output_seq = my_net.predict_traj(median_traj_len, current_tcp_in_base_quat).detach().numpy()[0]
-        # traj = quat_to_rotvect(output_seq[current_ind:ind])
-        # traj[:, :3] = (traj[:, :3] * train_stat['std'] + train_stat['mean']) / SCALE
-        # robot.servoL(traj)
+    colors = {'bolt': 'green', 'nut': 'yellow', 'bin': 'black', 'jig': 'purple', 'traj': 'red', 'trajectory': 'pink'}
 
-        ### Take wrist images
-        # time.sleep(5)
-        # wrist_cam.take_pics()
-        # wrist_cam.analyze_image()
-
-        target_dir = os.path.join(project_dir, 'data', 'reproduce', 'ibvs', action)
-        ibvs.run(destfolder_wrist, target_dir, ['nut1'])
-        raise
-
-
-
-    # colors =  {'bolt': 'green', 'nut':'yellow', 'bin':'black', 'jig':'purple', 'traj':'red', 'trajectory': 'pink'}
-    # my_net.plot_traj_and_obj_pos(my_net.output_seq.detach().numpy()[0], my_net.obj_seq.detach().numpy()[0], colors, all_objs)
-    # plt.show()
-    # print(output_seq.shape)
-    # raise
-    ### Prodict trajectory using Transformer
-
+    my_planner = Planner(my_net, ibvs, robot, zed_cam, wrist_cam, pose_processor, action_summary, colors, all_objs)
+    my_planner.current_ind = 0
+    # my_planner.traj_len = 198
+    # current_tcp_in_base = np.array([0.4646085308729565, -0.1381282317992776, 0.21073617361028618, 2.4689049270946595, 0.06929360866802006, 1.8535178670312829])
+    # current_tcp_in_base[:3] = current_tcp_in_base[:3] * SCALE
+    # current_tcp_in_base_quat = rotvect_to_quat(current_tcp_in_base).flatten()
+    # my_planner.previous_tcp_in_base_quat = current_tcp_in_base_quat
 
     ##### Set up pygame screen ##############
     n_trial = 0
@@ -705,53 +758,26 @@ if __name__ == "__main__":
                     elif key_pressed == 108:  ## Keyboard 'l' to use the last demonstration##
                         demo_id = sorted(os.listdir(FOLDER))[-1]
                         demo_dir = os.path.join(FOLDER, demo_id)
-                    elif key_pressed == 122:  ## Keyboard 'z' to get object pose from zed camera##
-                       df_pose_zed = get_obj_pose_zed()
-                    if key_pressed == 119:  ## Keyboard 'w' to capture 2 images from wrist camera and get object pose##
-                        df_pose_wrist = get_obj_pose_wrist()
-                    elif key_pressed == 117: ### Keyboard 'u' to update the object pose sequence
-                        obj_seq = update_object_pose(demo_dir)
-                    elif key_pressed == 112: ### Keyboard 'p' to predict the trajectory
-                        obj_seq_normalized = norm_func(obj_seq.clone())
-                        obj_seq_normalized = obj_seq_normalized[None, :, :]
-                        obj_seq_normalized = obj_seq_normalized.to(device)
-                        traj_seq = traj_seq.to(device)
-                        predicted_traj_tf, actin_tag_pred = new_model(obj_seq_normalized, traj_seq)
-                        predicted_traj = predicted_traj_tf.cpu().detach().numpy()[0]
-                        predicted_traj[:, :3] = predicted_traj[:, :3] * train_std + train_mean
-                        # predicted_traj[:, 3:] = process_quaternions(predicted_traj[:, 3:])
-                        actin_tag_pred = actin_tag_pred.cpu().detach().numpy()[0]
-                    elif key_pressed == 102: ### Keyboard 'f' to plot the trajectory and object pose
-                        fig = plt.figure(figsize=(9, 5))
-                        ax = fig.add_subplot(1, 1, 1, projection='3d')
-                        plot_traj_and_obj_pos(ax, predicted_traj, obj_seq, colors, all_objs)
-
-                        fig2, axes = plt.subplots(4, 1, figsize=(9, 10))
-                        plot_traj_ori(axes, predicted_traj[:, 3:])
-                        plt.show()
-
-
-
                     elif key_pressed == 111:  #### Keyboard 'o' to open the gripper ####
                         # print('Open the gripper')
-                        open_gripper(rtde)
+                        open_gripper(robot.rtde)
                     elif key_pressed == 99:  #### Keyboard 'c' to close the gripper####
                         # print('Close the gripper')
-                        close_gripper(rtde)
+                        close_gripper(robot.rtde)
                     elif key_pressed == 100: #### Keyboard 'd' to get back to defalt pose #####
-                        move_to_defalt_pose(rtde_c)
+                        move_to_defalt_pose(robot.rtde_c)
                     elif key_pressed == int(up): ### Keyboard up arrow to move forward###
-                        move_foward(rtde_r, rtde_c, speed, reference_frame)
+                        move_foward(robot.rtde_r, robot.rtde_c, speed, reference_frame)
                     elif key_pressed == int(down): ### Keyboard down arrow to move backward###
-                        move_backward(rtde_r, rtde_c, speed, reference_frame)
+                        move_backward(robot.rtde_r, robot.rtde_c, speed, reference_frame)
                     elif key_pressed == int(left): ### Keyboard left arrow to move left###
-                        move_left(rtde_r, rtde_c, speed, reference_frame)
+                        move_left(robot.rtde_r, robot.rtde_c, speed, reference_frame)
                     elif key_pressed == int(right): ### Keyboard right arrow to move right###
-                        move_right(rtde_r, rtde_c, speed, reference_frame)
+                        move_right(robot.rtde_r, robot.rtde_c, speed, reference_frame)
                     elif key_pressed == 61: ### Keyboard + to move up###
-                        move_up(rtde_r, rtde_c, speed, reference_frame)
+                        move_up(robot.rtde_r, robot.rtde_c, speed, reference_frame)
                     elif key_pressed == 45: ### Keyboard - to move down###
-                        move_down(rtde_r, rtde_c, speed, reference_frame)
+                        move_down(robot.rtde_r, robot.rtde_c, speed, reference_frame)
                     elif key_pressed == 55: ### keyboard 7 to change to slow mode###
                         speed_mode = 'slow'
                         speed = Ds[speed_mode]
@@ -762,12 +788,36 @@ if __name__ == "__main__":
                         speed_mode = 'fast'
                         speed = Ds[speed_mode]
                     elif key_pressed == 13: ### keyboard enter to stop the movement###
-                        stop(rtde_c)
+                        stop(robot.rtde_c)
                     elif key_pressed == 27: ### keyboard space ESC to stop the robot###
-                        protective_stop(rtde_c)
-
-
-
+                        protective_stop(robot.rtde_c)
+                    elif key_pressed == 115: ### keyboard 's' to stop the robot###
+                        my_planner.step()
+                    elif key_pressed == 112: ### keyboard 'p' to stop the robot###
+                        wrist_cam.take_pics()
+                    elif key_pressed == int(Caps_lock): ### Use Caps lock to change reference frame
+                        if reference_frame == 'base':
+                            reference_frame = 'tool'
+                        else:
+                            reference_frame = 'base'
+                    elif key_pressed == 118:### keyboard v to get back to vertical pose###
+                        get_vertical(robot.rtde_r, robot.rtde_c)
+                    elif key_pressed == 104: ### keyboard h to get to horizontal pose####
+                        get_horizontal(robot.rtde_r, robot.rtde_c)
+                    elif key_pressed == 44:### keyboard v to get back to vertical pose###
+                        wrist1_plus(robot.rtde_r, robot.rtde_c)
+                    elif key_pressed == 46: ### keyboard h to get to horizontal pose####
+                        wrist1_minus(robot.rtde_r, robot.rtde_c)
+                    elif key_pressed == 49: ### keyboard 1 to assemble###
+                        screw(robot.rtde_r, robot.rtde_c)
+                    elif key_pressed == 50: ### keyboard 2 to undo assemble###
+                        unscrew(robot.rtde_r, robot.rtde_c)
+                    elif key_pressed == 93:  #### keyboard right bracket to rotate clockwise####
+                        rotate_wrist_clockwise(robot.rtde_r, robot.rtde_c)
+                    elif key_pressed == 91:  #### keyboard left bracket to rotate counter-clockwize#####
+                        rotate_wrist_counterclockwise(robot.rtde_r, robot.rtde_c)
+                    elif key_pressed == 116: ### keyboard 't' ###
+                        print(robot.rtde_r.getActualTCPPose())
 
 
             elif event.type == pygame.KEYUP:
